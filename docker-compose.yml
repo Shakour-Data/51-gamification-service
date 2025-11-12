@@ -1,0 +1,112 @@
+# ================================================================================
+# Docker Compose Configuration for 51-gamification-service
+# ================================================================================
+# Following Gravity MicroServices standards from TEAM_PROMPT.md
+# - Service independence (own database, own Redis)
+# - Environment-based configuration
+# - Health checks for all services
+# - Named volumes for persistence
+# ================================================================================
+
+version: '3.8'
+
+services:
+  # ==============================================================================
+  # PostgreSQL Database
+  # ==============================================================================
+  db:
+    image: postgres:16-alpine
+    container_name: 51-gamification-service-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-gamification}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    ports:
+      - "${DB_PORT:-5451}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - gamification-service-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ==============================================================================
+  # Redis Cache
+  # ==============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: 51-gamification-service-redis
+    ports:
+      - "${REDIS_PORT:-6351}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gamification-service-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ==============================================================================
+  # Application Service
+  # ==============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: 51-gamification-service-app
+    environment:
+      # Database
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-gamification}
+      
+      # Redis
+      REDIS_URL: redis://redis:6379/0
+      
+      # Application
+      APP_NAME: 51-gamification-service
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      
+      # Port
+      PORT: ${APP_PORT:-8000}
+    ports:
+      - "${APP_PORT:-8051}:8000"
+    volumes:
+      - ./app:/app/app:ro
+    networks:
+      - gamification-service-net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  gamification-service-net:
+    driver: bridge
+    name: 51-gamification-service-network
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  postgres_data:
+    name: 51-gamification-service-postgres-data
+  redis_data:
+    name: 51-gamification-service-redis-data
